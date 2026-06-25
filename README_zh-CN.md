@@ -15,6 +15,26 @@
 *   **⏱️ 原子级 Git 快照**：在关键操作前自动创建工作区快照。如果大模型陷入了乱改代码的死循环，引擎将安全执行全局回滚。
 *   **⚙️ 危险指令高墙**：内置基于正则的黑名单校验，在到达宿主终端前，瞬间阻断 `rm -rf /`、`DROP TABLE` 等致命指令。
 
+## 🏗 核心架构图
+
+```mermaid
+graph TD
+    classDef llm fill:#f9f2f4,stroke:#d67a8b,stroke-width:2px,color:#333;
+    classDef validator fill:#e6f7ff,stroke:#69b1ff,stroke-width:2px,color:#333;
+    classDef storage fill:#f6ffed,stroke:#95de64,stroke-width:2px,color:#333;
+
+    User([用户请求]) --> A[LangGraph 编排器]
+    
+    subgraph Global Loop Engine
+        A -->|分配任务| C[Agent节点<br>代码生成与执行]:::llm
+        C -->|提交结果| B{Critic节点<br>沙盒验证器}:::validator
+        B -->|伪造数据 / 缺乏证据| C
+        B -->|100% 验证通过| D[StateSaver<br>Git快照与本地缓存]:::storage
+    end
+
+    D --> Success([最终可靠输出])
+```
+
 ## 🚀 快速上手
 
 ### 1. 安装

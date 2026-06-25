@@ -15,6 +15,26 @@
 *   **⏱️ Atomic Git Snapshots**: Automatically commits state checkpoints before execution. If the LLM enters a destructive spiral, the engine gracefully rolls back the entire workspace.
 *   **⚙️ Dangerous Command Filter**: Uses Regex-based whitelists to instantly block destructive shell commands (`rm -rf /`, `DROP TABLE`, etc.) before they hit your terminal.
 
+## 🏗 Architecture
+
+```mermaid
+graph TD
+    classDef llm fill:#f9f2f4,stroke:#d67a8b,stroke-width:2px,color:#333;
+    classDef validator fill:#e6f7ff,stroke:#69b1ff,stroke-width:2px,color:#333;
+    classDef storage fill:#f6ffed,stroke:#95de64,stroke-width:2px,color:#333;
+
+    User([User Request]) --> A[LangGraph Orchestrator]
+    
+    subgraph Global Loop Engine
+        A -->|Dispatch| C[AgentNode<br>Code Generation]:::llm
+        C -->|Propose Changes| B{CriticNode<br>Sandbox Validator}:::validator
+        B -->|Fake Data / Missing Evidence| C
+        B -->|100% Verified| D[StateSaver<br>Git Checkpoint & SQLite]:::storage
+    end
+
+    D --> Success([Final Output])
+```
+
 ## 🚀 Quick Start
 
 ### 1. Installation
