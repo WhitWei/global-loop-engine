@@ -1,0 +1,38 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
+
+# Environment files (may contain secrets)
+.env
+
+# Distribution / packaging
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Loop engine runtime
+.loop-engine/
+
+# Test junk files (user-level, not part of the project)
+examples/test_token_bucket.py
+pre_commit_hook.py

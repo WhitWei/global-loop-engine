@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "global-loop-engine"
+version = "2.0.0"
+description = "LangGraph-based agentic loop engine for IDE/CLI environments — enforces think→execute→critique→refine on every coding action"
+readme = "SKILL.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [
+    {name = "Qingwei", email = "qingwei@example.com"},
+]
+keywords = ["langgraph", "agent", "loop", "reflexion", "code-quality"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Quality Assurance",
+]
+
+dependencies = [
+    "langgraph>=0.2.0",
+    "langgraph-checkpoint-sqlite>=2.0.0",
+    "typing-extensions>=4.0.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+]
+
+[project.scripts]
+loop-engine = "scripts.loop_engine:main"
+
+[tool.setuptools.packages.find]
+include = ["scripts*"]
