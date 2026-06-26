@@ -29,11 +29,11 @@ jobs:
         
     - name: Lint with Ruff
       run: |
-        ruff check scripts/
+        ruff check global_loop_engine/
         
     - name: Type Check with mypy
       run: |
-        mypy scripts/loop_engine.py
+        mypy global_loop_engine/loop_engine.py
         
     - name: Test with pytest
       run: |

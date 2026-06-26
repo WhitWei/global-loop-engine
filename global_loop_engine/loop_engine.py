@@ -595,6 +595,15 @@ def human_approval_node(state: GlobalExecutionState) -> dict:
     print(f"   已尝试次数: {retry}")
     print(f"   最近失败原因: {last_feedback[:200]}")
     print("="*60)
+
+    # Prevent indefinite hanging in non-interactive environments (CI, agent runners)
+    if not sys.stdin.isatty():
+        logger.warning(
+            "⚠️ [HumanApproval] Non-interactive environment/stdin detected. "
+            "Aborting interactive prompt to prevent terminal hanging."
+        )
+        return {"is_constitutional": False, "retry_count": 99}
+
     print("\n选项：")
     print("  [y] 继续，让引擎再试一次")
     print("  [n] 放弃，保留当前状态供手动处理")
@@ -761,6 +770,17 @@ def main():
     logger.info("=" * 50)
     logger.info("Global Loop Engine v2.0 (LangGraph mode)")
     logger.info("=" * 50)
+
+    # Check for LLM API keys to warn users upfront
+    openai_key = os.environ.get("OPENAI_API_KEY")
+    anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
+    gemini_key = os.environ.get("GEMINI_API_KEY")
+    if not any([openai_key, anthropic_key, gemini_key]):
+        logger.warning(
+            "⚠️ [Environment] No LLM API keys (OPENAI_API_KEY, ANTHROPIC_API_KEY, or GEMINI_API_KEY) "
+            "detected in your environment. If you are using this engine with an LLM agent, "
+            "please set the appropriate key or configure it in a local .env file."
+        )
 
     final_state = resume_or_start(args.task, mode=args.mode)
 

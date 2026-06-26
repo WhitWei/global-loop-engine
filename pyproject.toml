@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "global-loop-engine"
-version = "0.1.0"
+version = "0.1.1"
 description = "LangGraph-based agentic loop engine for IDE/CLI environments — enforces think→execute→critique→refine on every coding action"
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -38,10 +38,10 @@ dev = [
 ]
 
 [project.scripts]
-loop-engine = "scripts.loop_engine:main"
+loop-engine = "global_loop_engine.loop_engine:main"
 
 [tool.setuptools.packages.find]
-include = ["scripts*"]
+include = ["global_loop_engine*"]
 
 [tool.ruff]
 line-length = 88

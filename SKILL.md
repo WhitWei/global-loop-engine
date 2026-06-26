@@ -21,6 +21,6 @@ description: 全局 Loop Engineering 引擎，强制 Agent 执行时使用基于
 loop-engine --task "<当前任务描述>"
 
 # 方式二：直接调用脚本
-python scripts/loop_engine.py --task "<当前任务描述>"
+python -m global_loop_engine.loop_engine --task "<当前任务描述>"
 ```
 引擎若给出错误（非 `0` exit code）或处于尚未满足验收退出条件时，必须根据反馈继续修复代码，直到验证通过（退出节点）才可进行汇报。
