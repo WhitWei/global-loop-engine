@@ -48,10 +48,13 @@ pip install global-loop-engine
 
 #### Method B: Download Release Asset (Offline / Custom version)
 1. Go to the [Releases](https://github.com/WhitWei/global-loop-engine/releases) page.
-2. Download the universal wheel package: `global_loop_engine-X.Y.Z-py3-none-any.whl`. (Note: macOS, Windows, and Linux users all download this same universal file).
-3. Run the installation:
+2. Download the universal wheel package (e.g., `global_loop_engine-0.1.0-py3-none-any.whl` for version `0.1.0`).
+   > **Note**: macOS, Windows, and Linux users all download this same universal file.
+   > **Naming Rule**: Python's packaging standard automatically replaces the hyphen `-` in the project name with an underscore `_` for `.whl` files (while keeping the hyphen in `.tar.gz` files).
+3. Run the installation (replace `0.1.0` with the actual version you downloaded, or use a wildcard):
    ```bash
-   pip install global_loop_engine-X.Y.Z-py3-none-any.whl
+   pip install global_loop_engine-0.1.0-py3-none-any.whl
+   # Or using wildcard: pip install global_loop_engine-*.whl
    ```
 
 #### Method C: Developer Mode (Clone and build)
