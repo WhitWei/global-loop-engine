@@ -125,6 +125,7 @@ class GlobalExecutionState(TypedDict):
     # Validation metrics
     validation_output: NotRequired[str]
     prev_test_pass_rate: NotRequired[float]
+    current_test_pass_rate: NotRequired[float]
 
     # WO-01 v2.0: feedback black hole elimination
     planned_commands: NotRequired[list[str]]
@@ -191,8 +192,8 @@ def export_state_to_json(state: dict, filepath: str = ".loop_state.json"):
         "last_exit_code", "retry_count", "max_retries", "critic_feedback",
         "is_constitutional", "assembled_context", "last_error_context",
         "compressed_history", "validation_output", "prev_test_pass_rate",
-        "planned_commands", "test_baseline_signature", "snapshot_counter",
-        "fatal_violation", "token_usage", "execution_duration"
+        "current_test_pass_rate", "planned_commands", "test_baseline_signature",
+        "snapshot_counter", "fatal_violation", "token_usage", "execution_duration"
     ]
     
     for key in serializable_keys:
@@ -596,6 +597,7 @@ def critic_node(state: GlobalExecutionState) -> dict:
         "failed_command": critic_cmd if exit_code != 0 else "N/A",
         "error_output": validation_output if exit_code != 0 else "",
         "diff_at_failure": diff_output if exit_code != 0 else "",
+        "prev_exit_code": state.get("last_exit_code", -1),
     }
 
     current_pass_rate = parse_pass_rate(validation_output)
@@ -631,7 +633,8 @@ def critic_node(state: GlobalExecutionState) -> dict:
         "retry_count": (state.get("retry_count", 0) or 0) + 1,
         "iteration_count": (state.get("iteration_count", 0) or 0) + 1,
         "state_hash_history": [compute_state_hash({"git_diff": diff_output[:MAX_DIFF_LENGTH]})],
-        "prev_test_pass_rate": current_pass_rate,
+        "prev_test_pass_rate": state.get("current_test_pass_rate", 0.0),
+        "current_test_pass_rate": current_pass_rate,
         "execution_duration": total_duration,
         "token_usage": accumulated_tokens,
     }
@@ -676,11 +679,20 @@ def check_delta_gain(state: GlobalExecutionState) -> bool:
     Reflexion 论文实践：如果连续两次重试的测试通过率无提升，提前熔断。
     ε = 2%（低于此值视为无进展）
     """
-    current_rate = parse_pass_rate(state.get("validation_output", ""))
+    current_exit_code = state.get("last_exit_code", 0)
+    prev_exit_code = state.get("last_error_context", {}).get("prev_exit_code", -1)
+    
+    # If either current or previous run is a collection/syntax error (exit code 2),
+    # do NOT trigger DeltaGain halt. Let the agent fix compilation first.
+    if current_exit_code == 2 or prev_exit_code == 2:
+        logger.info("[DeltaGain] Collection/compile error active (current exit code %d, prev %d). Skipping check.", current_exit_code, prev_exit_code)
+        return True
+
+    current_rate = state.get("current_test_pass_rate", 0.0)
     prev_rate = state.get("prev_test_pass_rate", 0.0)
     delta = abs(current_rate - prev_rate)
 
-    if (state.get("retry_count", 0) or 0) > 0 and delta < EPSILON_PASS_RATE_DELTA:
+    if (state.get("retry_count", 0) or 0) > 1 and delta < EPSILON_PASS_RATE_DELTA:
         logger.warning(
             "⚡ [DeltaGain] 无进展检测：当前通过率=%.1f%%, 上次=%.1f%%, Δ=%.1f%% < ε=%.1f%%",
             current_rate * 100, prev_rate * 100, delta * 100, EPSILON_PASS_RATE_DELTA * 100
@@ -900,6 +912,7 @@ def resume_or_start(task: str, mode: str = "auto", thread_id: str = "default"):
                 "state_hash_history": [],
                 "validation_output": "",
                 "prev_test_pass_rate": 0.0,
+                "current_test_pass_rate": 0.0,
                 "planned_commands": [],
                 "test_baseline_signature": "",
                 "snapshot_counter": 0,

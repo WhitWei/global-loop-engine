@@ -75,6 +75,7 @@ def test_route_after_critic_constitutional_exits_immediately():
         "is_constitutional": True,
         "retry_count": 0,
         "prev_test_pass_rate": 0.0,
+        "current_test_pass_rate": 0.0,
         "validation_output": "0 passed"
     }
     result = loop_engine.route_after_critic(state)
@@ -219,19 +220,20 @@ def test_detect_oscillation():
 def test_check_delta_gain():
     # 1. No change in pass rate (delta < epsilon) -> returns False
     state = {
-        "retry_count": 1,
-        "validation_output": "1 passed",
+        "retry_count": 2,
+        "last_exit_code": 1,
+        "current_test_pass_rate": 1.0,
         "prev_test_pass_rate": 1.0
     }
     assert loop_engine.check_delta_gain(state) is False
     
     # 2. Change in pass rate (delta > epsilon) -> returns True
     state = {
-        "retry_count": 1,
-        "validation_output": "2 passed",
+        "retry_count": 2,
+        "last_exit_code": 1,
+        "current_test_pass_rate": 1.0,
         "prev_test_pass_rate": 0.5
     }
-    # parsed = 2/2 = 1.0, prev = 0.5, delta = 0.5 > 0.02
     assert loop_engine.check_delta_gain(state) is True
 
 def test_route_after_critic_branches():
@@ -256,8 +258,9 @@ def test_route_after_critic_branches():
     # 4. No delta gain progress
     state = {
         "is_constitutional": False,
-        "retry_count": 1,
-        "validation_output": "1 passed",
+        "retry_count": 2,
+        "last_exit_code": 1,
+        "current_test_pass_rate": 1.0,
         "prev_test_pass_rate": 1.0
     }
     assert loop_engine.route_after_critic(state) == "human_approval"
@@ -267,7 +270,8 @@ def test_route_after_critic_branches():
         "is_constitutional": False,
         "retry_count": 3,
         "max_retries": 3,
-        "validation_output": "2 passed",
+        "last_exit_code": 1,
+        "current_test_pass_rate": 1.0,
         "prev_test_pass_rate": 0.5
     }
     assert loop_engine.route_after_critic(state) == "human_approval"
@@ -275,9 +279,10 @@ def test_route_after_critic_branches():
     # 6. Standard retry
     state = {
         "is_constitutional": False,
-        "retry_count": 1,
+        "retry_count": 2,
         "max_retries": 3,
-        "validation_output": "2 passed",
+        "last_exit_code": 1,
+        "current_test_pass_rate": 1.0,
         "prev_test_pass_rate": 0.5
     }
     assert loop_engine.route_after_critic(state) == "retry"
@@ -476,3 +481,23 @@ def test_compute_test_signature_with_files():
         assert sig != sig2
     finally:
         shutil.rmtree(tmpdir)
+
+def test_check_delta_gain_exit_code_2():
+    # 1. Current exit code is 2 -> returns True (bypasses DeltaGain halt)
+    state = {
+        "retry_count": 2,
+        "last_exit_code": 2,
+        "prev_test_pass_rate": 0.0,
+        "current_test_pass_rate": 0.0
+    }
+    assert loop_engine.check_delta_gain(state) is True
+
+    # 2. Previous exit code was 2 -> returns True (bypasses DeltaGain halt)
+    state = {
+        "retry_count": 2,
+        "last_exit_code": 1,
+        "last_error_context": {"prev_exit_code": 2},
+        "prev_test_pass_rate": 0.0,
+        "current_test_pass_rate": 0.0
+    }
+    assert loop_engine.check_delta_gain(state) is True
