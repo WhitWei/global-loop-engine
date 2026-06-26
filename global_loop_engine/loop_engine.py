@@ -13,17 +13,18 @@ Key design decisions:
 - Oscillation detection to detect A -> B -> A cycles.
 """
 
-import os
-import sys
-import subprocess
 import argparse
-import logging
 import hashlib
-import re
+import logging
 import operator
-from typing import TypedDict, Annotated
-from typing_extensions import NotRequired
+import os
+import re
+import subprocess
+import sys
 from pathlib import Path
+from typing import Annotated, TypedDict
+
+from typing_extensions import NotRequired
 
 # Load .env file before reading constants
 try:
@@ -33,8 +34,8 @@ except ImportError:
     pass
 
 try:
-    from langgraph.graph import StateGraph, END
     from langgraph.checkpoint.sqlite import SqliteSaver
+    from langgraph.graph import END, StateGraph
     _LANGGRAPH_AVAILABLE = True
 except ImportError:
     _LANGGRAPH_AVAILABLE = False
@@ -518,7 +519,7 @@ def check_delta_gain(state: GlobalExecutionState) -> bool:
     current_rate = parse_pass_rate(state.get("validation_output", ""))
     prev_rate = state.get("prev_test_pass_rate", 0.0)
     delta = abs(current_rate - prev_rate)
-    
+
     if (state.get("retry_count", 0) or 0) > 0 and delta < EPSILON_PASS_RATE_DELTA:
         logger.warning(
             "⚡ [DeltaGain] 无进展检测：当前通过率=%.1f%%, 上次=%.1f%%, Δ=%.1f%% < ε=%.1f%%",
@@ -589,7 +590,7 @@ def human_approval_node(state: GlobalExecutionState) -> dict:
     retry = state.get("retry_count", 0)
     feedbacks = state.get("critic_feedback", [])
     last_feedback = feedbacks[-1] if feedbacks else "未知原因"
-    
+
     print("\n" + "="*60)
     print("🤝 [HumanApprovalNode] 需要您的介入！")
     print(f"   已尝试次数: {retry}")
@@ -608,12 +609,12 @@ def human_approval_node(state: GlobalExecutionState) -> dict:
     print("  [y] 继续，让引擎再试一次")
     print("  [n] 放弃，保留当前状态供手动处理")
     print("  [r] 完全重置，从头开始")
-    
+
     try:
         choice = input("\n请输入您的选择 [y/n/r]: ").strip().lower()
     except EOFError:
         choice = "n"
-    
+
     if choice == "y":
         logger.info("[HumanApproval] 用户选择继续，重置重试计数...")
         return {"retry_count": 0, "is_constitutional": False}
@@ -703,10 +704,10 @@ def resume_or_start(task: str, mode: str = "auto", thread_id: str = "default"):
         if graph is None:
             logger.error("Graph build failed")
             sys.exit(1)
-            
+
         config = {"configurable": {"thread_id": thread_id}}
         existing = graph.get_state(config)
-        
+
         if existing and getattr(existing, 'values', None):
             logger.info("[Recovery] 检测到未完成的 Loop (thread_id=%s)，从断点继续...", thread_id)
             final_state = None
@@ -746,7 +747,7 @@ def resume_or_start(task: str, mode: str = "auto", thread_id: str = "default"):
             elif mode == "fast":
                 logger.info("[/fast] 快速模式：开启单次严格沙盒验证，拒绝任何重试")
                 initial_state["max_retries"] = 0
-                
+
             final_state = None
             for event in graph.stream(initial_state, config=config):
                 for node_name, node_state in event.items():
