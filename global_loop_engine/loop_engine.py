@@ -771,17 +771,6 @@ def main():
     logger.info("Global Loop Engine v2.0 (LangGraph mode)")
     logger.info("=" * 50)
 
-    # Check for LLM API keys to warn users upfront
-    openai_key = os.environ.get("OPENAI_API_KEY")
-    anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
-    gemini_key = os.environ.get("GEMINI_API_KEY")
-    if not any([openai_key, anthropic_key, gemini_key]):
-        logger.warning(
-            "⚠️ [Environment] No LLM API keys (OPENAI_API_KEY, ANTHROPIC_API_KEY, or GEMINI_API_KEY) "
-            "detected in your environment. If you are using this engine with an LLM agent, "
-            "please set the appropriate key or configure it in a local .env file."
-        )
-
     final_state = resume_or_start(args.task, mode=args.mode)
 
     logger.info("=" * 50)
