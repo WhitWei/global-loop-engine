@@ -39,8 +39,22 @@ graph TD
 
 ### 1. Installation
 
-Clone the repository and install the package in editable mode:
+Choose one of the following methods to install (supports macOS, Windows, and Linux):
 
+#### Method A: Install via PyPI (Recommended)
+```bash
+pip install global-loop-engine
+```
+
+#### Method B: Download Release Asset (Offline / Custom version)
+1. Go to the [Releases](https://github.com/WhitWei/global-loop-engine/releases) page.
+2. Download the universal wheel package: `global_loop_engine-X.Y.Z-py3-none-any.whl`. (Note: macOS, Windows, and Linux users all download this same universal file).
+3. Run the installation:
+   ```bash
+   pip install global_loop_engine-X.Y.Z-py3-none-any.whl
+   ```
+
+#### Method C: Developer Mode (Clone and build)
 ```bash
 git clone https://github.com/WhitWei/global-loop-engine.git
 cd global-loop-engine

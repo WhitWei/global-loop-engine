@@ -39,8 +39,22 @@ graph TD
 
 ### 1. 安装
 
-克隆仓库并以开发者模式安装：
+您可以根据需求选择以下任意一种方式进行安装（均支持 macOS、Windows 和 Linux）：
 
+#### 方法 A：通过 PyPI 安装（推荐普通用户）
+```bash
+pip install global-loop-engine
+```
+
+#### 方法 B：下载 GitHub Releases 资源包安装（离线 / 特定版本）
+1. 访问 [Releases](https://github.com/WhitWei/global-loop-engine/releases) 页面。
+2. 下载通用的 Wheel 资源包：`global_loop_engine-X.Y.Z-py3-none-any.whl`（注：MacOS、Windows 和 Linux 用户均使用此同一个通用包，无需寻找平台专属后缀）。
+3. 在本地运行安装：
+   ```bash
+   pip install global_loop_engine-X.Y.Z-py3-none-any.whl
+   ```
+
+#### 方法 C：开发者模式安装（克隆源码）
 ```bash
 git clone https://github.com/WhitWei/global-loop-engine.git
 cd global-loop-engine
