@@ -138,6 +138,10 @@ class GlobalExecutionState(TypedDict):
     # S-002 fix: fatal violation flag — skips retry, halts immediately
     fatal_violation: NotRequired[bool]
 
+    # Metrics & Cost Tracking
+    token_usage: NotRequired[dict]
+    execution_duration: NotRequired[float]
+
 
 # =============================================================================
 # Helper functions
@@ -147,6 +151,63 @@ def compute_state_hash(code_diffs: dict) -> str:
     """Compute a short MD5 fingerprint of the current code diffs."""
     content = str(sorted(code_diffs.items())) if code_diffs else "empty"
     return hashlib.md5(content.encode()).hexdigest()[:8]
+
+
+def load_token_usage_from_env() -> dict:
+    """Read prompt/completion tokens from environment variables if set by the Agent."""
+    try:
+        prompt_tokens = int(os.environ.get("LLM_PROMPT_TOKENS", "0"))
+        completion_tokens = int(os.environ.get("LLM_COMPLETION_TOKENS", "0"))
+        cost_usd = float(os.environ.get("LLM_COST_USD", "0.0"))
+        if prompt_tokens > 0 or completion_tokens > 0:
+            return {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "estimated_llm_cost_usd": cost_usd
+            }
+    except (ValueError, TypeError):
+        pass
+    return {}
+
+
+def export_state_to_json(state: dict, filepath: str = ".loop_state.json"):
+    """Helper to dump the GlobalExecutionState to a structured JSON file."""
+    import json
+    
+    # Compute the latest actual cost if we have token usage or execution duration
+    llm_cost = state.get("token_usage", {}).get("estimated_llm_cost_usd", 0.0) or 0.0
+    duration = state.get("execution_duration", 0.0) or 0.0
+    compute_unit_price = float(os.environ.get("COMPUTE_UNIT_PRICE", "0.0001"))
+    compute_cost = duration * compute_unit_price
+    actual_cost = llm_cost + compute_cost
+    
+    if actual_cost > 0:
+        state["estimated_cost"] = round(actual_cost, 4)
+        
+    # Extract only serializable fields, filter out non-serializable like operators/types
+    clean_state = {}
+    serializable_keys = [
+        "task_prompt", "complexity_score", "estimated_cost", "execution_plan",
+        "last_exit_code", "retry_count", "max_retries", "critic_feedback",
+        "is_constitutional", "assembled_context", "last_error_context",
+        "compressed_history", "validation_output", "prev_test_pass_rate",
+        "planned_commands", "test_baseline_signature", "snapshot_counter",
+        "fatal_violation", "token_usage", "execution_duration"
+    ]
+    
+    for key in serializable_keys:
+        if key in state:
+            clean_state[key] = state[key]
+            
+    # Include metadata
+    clean_state["status"] = "PASSED" if state.get("is_constitutional") else "FAILED"
+    
+    try:
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(clean_state, f, indent=2, ensure_ascii=False)
+        logger.info("[StateExport] Exported state to %s", filepath)
+    except Exception as e:
+        logger.error("[StateExport] Failed to export state: %s", e)
 
 
 def _compute_file_tree_hash(directory: str) -> str:
@@ -344,18 +405,66 @@ def planner_node(state: GlobalExecutionState) -> dict:
 # =============================================================================
 
 def complexity_scorer_node(state: GlobalExecutionState) -> dict:
-    """Assess task complexity based on length and keyword heuristics."""
-    task = state.get("task_prompt", "")
-    score = min(len(task) // 10 + 1, 10)
-    logger.info("[ComplexityScorerNode] Task complexity score: %d", score)
+    """Assess task complexity based on Git diff scope (modified files and lines changed)."""
+    modified_files = 0
+    lines_changed = 0
+
+    try:
+        # Run git diff --numstat to get the lines added, deleted and file names
+        result = subprocess.run(
+            ["git", "diff", "--numstat"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        output = result.stdout.strip()
+        if output:
+            for line in output.splitlines():
+                parts = line.split("\t")
+                if len(parts) >= 3:
+                    added = parts[0]
+                    deleted = parts[1]
+                    # Handle binary files which might have "-" instead of numbers
+                    try:
+                        added_val = int(added) if added != "-" else 0
+                        deleted_val = int(deleted) if deleted != "-" else 0
+                        lines_changed += added_val + deleted_val
+                    except ValueError:
+                        pass
+                    modified_files += 1
+    except Exception as e:
+        logger.warning("[ComplexityScorerNode] Git diff check failed or not in git repo: %s", e)
+        # Fall back to task prompt length or 1 if git fails
+        task = state.get("task_prompt", "")
+        score = min(len(task) // 10 + 1, 10)
+        logger.info("[ComplexityScorerNode] Falling back to text heuristic complexity score: %d", score)
+        return {"complexity_score": score}
+
+    # Complexity = min(modified_files * 2 + lines_changed / 50 + 1, 10)
+    score = min(int(modified_files * 2 + lines_changed / 50 + 1), 10)
+    score = max(score, 1)  # Ensure score is at least 1
+    logger.info(
+        "[ComplexityScorerNode] Git diff stats: %d files modified, %d lines changed. Complexity score: %d",
+        modified_files, lines_changed, score
+    )
     return {"complexity_score": score}
 
 
 def cost_estimator_node(state: GlobalExecutionState) -> dict:
-    """Estimate execution cost from complexity score."""
-    complexity = state.get("complexity_score", 1) or 1
-    cost = round(complexity * 0.75, 2)
-    logger.info("[CostEstimatorNode] Estimated cost: %.2f", cost)
+    """Estimate execution cost from token usage and execution duration, or fallback to complexity heuristic."""
+    llm_cost = state.get("token_usage", {}).get("estimated_llm_cost_usd", 0.0) or 0.0
+    duration = state.get("execution_duration", 0.0) or 0.0
+    compute_unit_price = float(os.environ.get("COMPUTE_UNIT_PRICE", "0.0001"))
+    compute_cost = duration * compute_unit_price
+    
+    if llm_cost == 0.0 and duration == 0.0:
+        complexity = state.get("complexity_score", 1) or 1
+        cost = round(complexity * 0.75, 2)
+        logger.info("[CostEstimatorNode] First run, estimating cost from complexity heuristic: %.2f", cost)
+    else:
+        cost = round(llm_cost + compute_cost, 4)
+        logger.info("[CostEstimatorNode] Actual cost calculated: %.4f (LLM: %.4f, Compute: %.4f)", cost, llm_cost, compute_cost)
+        
     return {"estimated_cost": cost}
 
 
@@ -420,10 +529,12 @@ def state_compressor_node(state: GlobalExecutionState) -> dict:
 
 
 def critic_node(state: GlobalExecutionState) -> dict:
-    """Hard validation via subprocess (pytest, git diff).
+    """Hard validation via subprocess.
 
     Only terminal return codes are truth — never trust the model's word.
     """
+    import time
+    start_time = time.time()
     logger.info("[CriticNode] Starting hard validation...")
 
     # 1. Git diff snapshot
@@ -436,35 +547,80 @@ def critic_node(state: GlobalExecutionState) -> dict:
     except FileNotFoundError:
         diff_output = "Git not found."
 
-    # 2. pytest hard validation
+    # 2. Tech stack auto-detection and execution
+    critic_cmd = os.environ.get("CRITIC_COMMAND")
+    strict_test = os.environ.get("STRICT_TEST_REQUIREMENT", "true").lower() == "true"
+    
+    if not critic_cmd:
+        if os.path.exists("package.json"):
+            critic_cmd = "npm test"
+        elif os.path.exists("go.mod"):
+            critic_cmd = "go test ./..."
+        elif os.path.exists("Cargo.toml"):
+            critic_cmd = "cargo test"
+        else:
+            critic_cmd = "pytest"
+
+    logger.info("[CriticNode] Execution Command: %s", critic_cmd)
+    
     exit_code = 0
     validation_output = ""
+    
     try:
-        probe = subprocess.run(["pytest", "--version"], capture_output=True, text=True)
-        if probe.returncode == 0:
-            logger.info("[CriticNode] pytest detected, running tests...")
-            test_result = subprocess.run(["pytest"], capture_output=True, text=True)
-            exit_code = test_result.returncode
-            validation_output = test_result.stdout + "\n" + test_result.stderr
-        else:
-            validation_output = "pytest not available, skipping test execution."
-    except FileNotFoundError:
-        validation_output = "pytest not installed, skipping test execution."
-        exit_code = 0
+        # Run command via shell=True to support pipelines (e.g. npm run lint && npm test)
+        result = subprocess.run(critic_cmd, shell=True, capture_output=True, text=True)
+        exit_code = result.returncode
+        validation_output = result.stdout + "\n" + result.stderr
+        
+        # Strict mode check: command not found (exited with code 127)
+        if strict_test and exit_code == 127:
+            logger.warning("[CriticNode] Critic command not found (exit code 127) in strict mode. Failing validation.")
+            exit_code = 1
+            validation_output += "\nERROR: Validator command not found in strict mode."
+            
+        # If strict_test and pytest is missing or skipped
+        if "pytest" in critic_cmd and strict_test:
+            if "command not found" in validation_output or "No module named pytest" in validation_output:
+                logger.warning("[CriticNode] pytest is not available in strict mode. Failing validation.")
+                exit_code = 1
+                validation_output += "\nERROR: pytest is not installed but required by strict mode."
+
     except Exception as e:
         exit_code = 1
-        validation_output = f"Validation error: {e}"
+        validation_output = f"Validation error during execution: {e}"
 
     is_valid = exit_code == 0
     logger.info("[CriticNode] Validation done. Exit: %d, Pass: %s", exit_code, is_valid)
 
     last_error_context = {
-        "failed_command": "pytest" if exit_code != 0 else "N/A",
+        "failed_command": critic_cmd if exit_code != 0 else "N/A",
         "error_output": validation_output if exit_code != 0 else "",
         "diff_at_failure": diff_output if exit_code != 0 else "",
     }
 
     current_pass_rate = parse_pass_rate(validation_output)
+    execution_duration = time.time() - start_time
+
+    # Accumulate execution duration
+    prev_duration = state.get("execution_duration", 0.0) or 0.0
+    total_duration = prev_duration + execution_duration
+
+    # Load and accumulate token usage
+    env_tokens = load_token_usage_from_env()
+    current_tokens = state.get("token_usage") or {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "estimated_llm_cost_usd": 0.0
+    }
+    new_prompt = current_tokens.get("prompt_tokens", 0) + env_tokens.get("prompt_tokens", 0)
+    new_completion = current_tokens.get("completion_tokens", 0) + env_tokens.get("completion_tokens", 0)
+    new_llm_cost = current_tokens.get("estimated_llm_cost_usd", 0.0) + env_tokens.get("estimated_llm_cost_usd", 0.0)
+    
+    accumulated_tokens = {
+        "prompt_tokens": new_prompt,
+        "completion_tokens": new_completion,
+        "estimated_llm_cost_usd": new_llm_cost
+    }
 
     return {
         "code_diffs": {"git_diff": diff_output[:MAX_DIFF_LENGTH]},
@@ -476,6 +632,8 @@ def critic_node(state: GlobalExecutionState) -> dict:
         "iteration_count": (state.get("iteration_count", 0) or 0) + 1,
         "state_hash_history": [compute_state_hash({"git_diff": diff_output[:MAX_DIFF_LENGTH]})],
         "prev_test_pass_rate": current_pass_rate,
+        "execution_duration": total_duration,
+        "token_usage": accumulated_tokens,
     }
 
 
@@ -606,7 +764,9 @@ def human_approval_node(state: GlobalExecutionState) -> dict:
             "⚠️ [HumanApproval] Non-interactive environment/stdin detected. "
             "Aborting interactive prompt to prevent terminal hanging."
         )
-        return {"is_constitutional": False, "retry_count": 99}
+        updates = {"is_constitutional": False, "retry_count": 99}
+        export_state_to_json({**state, **updates})
+        return updates
 
     print("\n选项：")
     print("  [y] 继续，让引擎再试一次")
@@ -620,13 +780,16 @@ def human_approval_node(state: GlobalExecutionState) -> dict:
 
     if choice == "y":
         logger.info("[HumanApproval] 用户选择继续，重置重试计数...")
-        return {"retry_count": 0, "is_constitutional": False}
+        updates = {"retry_count": 0, "is_constitutional": False}
     elif choice == "r":
         logger.info("[HumanApproval] 用户选择重置，清空所有状态...")
-        return {"retry_count": 0, "code_diffs": {}, "critic_feedback": [], "is_constitutional": False}
+        updates = {"retry_count": 0, "code_diffs": {}, "critic_feedback": [], "is_constitutional": False}
     else:
         logger.info("[HumanApproval] 用户选择放弃，引擎挂起。")
-        return {"is_constitutional": False, "retry_count": 99}  # 强制结束
+        updates = {"is_constitutional": False, "retry_count": 99}  # 强制结束
+
+    export_state_to_json({**state, **updates})
+    return updates
 
 
 # =============================================================================
@@ -686,7 +849,7 @@ def build_graph(checkpointer=None):
     workflow.add_edge("rollback", "state_compressor")    # C-001: rollback then compress
     workflow.add_edge("state_compressor", "context_assembler")
     logger.info("State graph compiled successfully")
-    return workflow.compile(checkpointer=checkpointer)
+    return workflow.compile(checkpointer=checkpointer, interrupt_before=["actor_wrapper"])
 
 def build_graph_with_persistence(checkpointer=None):
     """构建带持久化检查点的图，支持跨会话恢复"""
@@ -713,13 +876,11 @@ def resume_or_start(task: str, mode: str = "auto", thread_id: str = "default"):
 
         if existing and getattr(existing, 'values', None):
             logger.info("[Recovery] 检测到未完成的 Loop (thread_id=%s)，从断点继续...", thread_id)
-            final_state = None
             for event in graph.stream(None, config=config):
                 for node_name, node_state in event.items():
                     if node_name != "__end__":
                         logger.info("--- Node [%s] completed ---", node_name)
-                    final_state = node_state
-            return final_state
+            return graph.get_state(config).values
         else:
             logger.info("[Recovery] 未找到历史状态，全新开始...")
             initial_state: GlobalExecutionState = {
@@ -743,6 +904,8 @@ def resume_or_start(task: str, mode: str = "auto", thread_id: str = "default"):
                 "test_baseline_signature": "",
                 "snapshot_counter": 0,
                 "fatal_violation": False,
+                "token_usage": {},
+                "execution_duration": 0.0,
             }
             if mode == "loop":
                 logger.info("[/loop] 强制 Loop 模式：无视复杂度评分，强制启动完整闭环")
@@ -751,13 +914,22 @@ def resume_or_start(task: str, mode: str = "auto", thread_id: str = "default"):
                 logger.info("[/fast] 快速模式：开启单次严格沙盒验证，拒绝任何重试")
                 initial_state["max_retries"] = 0
 
-            final_state = None
+            # Stream initial setup until first interrupt
             for event in graph.stream(initial_state, config=config):
                 for node_name, node_state in event.items():
                     if node_name != "__end__":
                         logger.info("--- Node [%s] completed ---", node_name)
-                    final_state = node_state
-            return final_state
+            
+            # Check if paused before actor_wrapper on first run
+            state = graph.get_state(config)
+            if state.next and "actor_wrapper" in state.next:
+                logger.info("[First Run] Resuming execution past the first actor_wrapper interrupt...")
+                for event in graph.stream(None, config=config):
+                    for node_name, node_state in event.items():
+                        if node_name != "__end__":
+                            logger.info("--- Node [%s] completed ---", node_name)
+            
+            return graph.get_state(config).values
 
 # =============================================================================
 # CLI entry point
@@ -802,6 +974,7 @@ def main():
         fb = final_state.get("critic_feedback")
         if fb:
             logger.info("Feedback: %s", fb)
+        export_state_to_json(final_state)
 
     sys.exit(exit_code)
 
