@@ -108,6 +108,7 @@ class GlobalExecutionState(TypedDict):
     # Control flow & circuit breakers
     retry_count: NotRequired[int]
     max_retries: NotRequired[int]
+    iteration_count: NotRequired[int]
 
     # Critic feedback (Reducer: operator.add appends, never overwrites)
     critic_feedback: NotRequired[Annotated[list[str], operator.add]]
@@ -472,6 +473,7 @@ def critic_node(state: GlobalExecutionState) -> dict:
         "is_constitutional": is_valid,
         "last_error_context": last_error_context,
         "retry_count": (state.get("retry_count", 0) or 0) + 1,
+        "iteration_count": (state.get("iteration_count", 0) or 0) + 1,
         "state_hash_history": [compute_state_hash({"git_diff": diff_output[:MAX_DIFF_LENGTH]})],
         "prev_test_pass_rate": current_pass_rate,
     }
@@ -537,6 +539,11 @@ def route_after_critic(state: GlobalExecutionState) -> str:
         logger.critical("[Router] FATAL violation detected — halting immediately, no retry")
         return "fatal"
 
+    # Priority 1: if already constitutional, exit immediately — do NOT run DeltaGain
+    if state.get("is_constitutional"):
+        logger.info("[Router] Passed -> end")
+        return "end"
+
     if detect_oscillation(state):
         logger.warning("[Router] Oscillation -> human_approval")
         return "human_approval"
@@ -544,10 +551,6 @@ def route_after_critic(state: GlobalExecutionState) -> str:
     if not check_delta_gain(state):
         logger.warning("[Router] Delta-gain below threshold -> human_approval")
         return "human_approval"
-
-    if state.get("is_constitutional"):
-        logger.info("[Router] Passed -> end")
-        return "end"
 
     max_r = state.get("max_retries", MAX_RETRIES) or MAX_RETRIES
     if retry >= max_r:
@@ -766,13 +769,22 @@ def main():
     parser.add_argument("--task", type=str, required=True, help="Task description")
     parser.add_argument("--mode", choices=["loop", "fast", "auto"], default="auto",
                         help="loop=强制完整闭环; fast=跳过Loop直出; auto=复杂度自动判断")
+    parser.add_argument(
+        "--thread-id",
+        type=str,
+        default=None,
+        help="Checkpoint thread ID. Defaults to a hash of the task string for isolation."
+    )
     args = parser.parse_args()
 
     logger.info("=" * 50)
     logger.info("Global Loop Engine v2.0 (LangGraph mode)")
     logger.info("=" * 50)
 
-    final_state = resume_or_start(args.task, mode=args.mode)
+    import hashlib as _hashlib
+    thread_id = args.thread_id or _hashlib.md5(args.task.encode()).hexdigest()[:12]
+    logger.info("Thread ID: %s", thread_id)
+    final_state = resume_or_start(args.task, mode=args.mode, thread_id=thread_id)
 
     logger.info("=" * 50)
     logger.info("Engine Summary")
@@ -785,7 +797,7 @@ def main():
         exit_code = 1
 
     if final_state:
-        logger.info("Total iterations: %d", final_state.get("retry_count", 0))
+        logger.info("Total iterations: %d", final_state.get("iteration_count", 0))
         logger.info("Final exit code: %d", final_state.get("last_exit_code", -1))
         fb = final_state.get("critic_feedback")
         if fb:

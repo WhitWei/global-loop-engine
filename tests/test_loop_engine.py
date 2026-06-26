@@ -1,5 +1,5 @@
 import sys
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 import pytest
 from global_loop_engine import loop_engine
 
@@ -67,3 +67,28 @@ def test_human_approval_node_interactive_reset():
         assert result["retry_count"] == 0
         assert result["code_diffs"] == {}
         assert result["critic_feedback"] == []
+
+def test_route_after_critic_constitutional_exits_immediately():
+    # If is_constitutional is True, it should return "end" immediately, even if DeltaGain would fail (Δ = 0)
+    state = {
+        "is_constitutional": True,
+        "retry_count": 0,
+        "prev_test_pass_rate": 0.0,
+        "validation_output": "0 passed"
+    }
+    result = loop_engine.route_after_critic(state)
+    assert result == "end"
+
+def test_critic_node_increments_iteration_count():
+    state = {"iteration_count": 5}
+    # Mock subprocess run to avoid executing actual tests during this unit test
+    with patch("subprocess.run") as mock_run, \
+         patch("subprocess.check_output", return_value="diff"):
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "10 passed"
+        mock_result.stderr = ""
+        mock_run.return_value = mock_result
+        
+        result = loop_engine.critic_node(state)
+        assert result["iteration_count"] == 6
