@@ -501,3 +501,46 @@ def test_check_delta_gain_exit_code_2():
         "current_test_pass_rate": 0.0
     }
     assert loop_engine.check_delta_gain(state) is True
+
+
+def test_compute_test_signature_excludes_pycache():
+    """测试计算测试签名时，会排除缓存目录和编译文件（如 __pycache__, .pytest_cache 以及 .pyc 文件）。"""
+    import tempfile
+    import shutil
+    
+    tmpdir = tempfile.mkdtemp()
+    try:
+        # 1. 创建普通测试文件
+        filepath = os.path.join(tmpdir, "test_file.py")
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write("def test_dummy(): pass")
+            
+        sig_base = loop_engine.compute_test_signature(tmpdir)
+        assert len(sig_base) == 64
+        
+        # 2. 创建 __pycache__ 目录和里面的 .pyc 文件
+        pycache_dir = os.path.join(tmpdir, "__pycache__")
+        os.makedirs(pycache_dir, exist_ok=True)
+        pyc_file = os.path.join(pycache_dir, "test_file.cpython-310.pyc")
+        with open(pyc_file, "wb") as f:
+            f.write(b"dummy compiled byte code")
+            
+        # 3. 创建 .pytest_cache 目录和里面的内容
+        pytest_cache_dir = os.path.join(tmpdir, ".pytest_cache")
+        pytest_file = os.path.join(pytest_cache_dir, "v/cache/lastfailed")
+        os.makedirs(os.path.dirname(pytest_file), exist_ok=True)
+        with open(pytest_file, "w", encoding="utf-8") as f:
+            f.write('{"test_dummy": true}')
+            
+        # 4. 创建独立的 .pyc 文件
+        pyc_isolated = os.path.join(tmpdir, "test_file.pyc")
+        with open(pyc_isolated, "wb") as f:
+            f.write(b"another dummy pyc")
+            
+        sig_with_caches = loop_engine.compute_test_signature(tmpdir)
+        # 签名应该不受缓存文件和目录的影响，保持一致
+        assert sig_base == sig_with_caches
+        
+    finally:
+        shutil.rmtree(tmpdir)
+

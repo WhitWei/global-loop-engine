@@ -223,7 +223,18 @@ def _compute_file_tree_hash(directory: str) -> str:
     p = Path(directory)
     if not p.exists():
         return "NO_TESTS_DIR"
+
+    exclude_patterns = {"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"}
+    exclude_extensions = {".pyc", ".pyo", ".pyd"}
+
     for filepath in sorted(p.rglob("*")):
+        # Skip cache directories
+        if any(part in exclude_patterns for part in filepath.parts):
+            continue
+        # Skip compiled/cached files
+        if filepath.suffix in exclude_extensions:
+            continue
+
         if filepath.is_file():
             try:
                 with open(filepath, "rb") as fh:
