@@ -673,17 +673,18 @@ def detect_oscillation(state: GlobalExecutionState) -> bool:
 # =============================================================================
 
 def parse_pass_rate(validation_output: str) -> float:
-    """从 pytest 输出中解析测试通过率"""
+    """从 pytest 输出中解析测试通过率。若为非 pytest 框架或解析不到用例，返回 -1.0"""
     if not validation_output:
-        return 0.0
-    match = re.search(r"(\d+) passed", validation_output)
+        return -1.0
     total_str = validation_output
     total_matches = re.findall(r"(\d+) (?:passed|failed|error)", total_str)
     total = sum(int(n) for n in total_matches)
-    if match and total > 0:
-        passed = int(match.group(1))
-        return passed / max(total, 1)
-    return 0.0
+    if total > 0:
+        match = re.search(r"(\d+) passed", validation_output)
+        passed = int(match.group(1)) if match else 0
+        return passed / total
+    return -1.0
+
 
 def check_delta_gain(state: GlobalExecutionState) -> bool:
     """
@@ -701,6 +702,13 @@ def check_delta_gain(state: GlobalExecutionState) -> bool:
 
     current_rate = state.get("current_test_pass_rate", 0.0)
     prev_rate = state.get("prev_test_pass_rate", 0.0)
+    
+    # 如果其中任何一个是负数（说明无法可靠解析通过率，比如非 pytest 项目），
+    # 或者是 total 解析不出来的其他非标准化测试，直接 Bypass DeltaGain 检测。
+    if current_rate < 0 or prev_rate < 0:
+        logger.info("[DeltaGain] Unable to parse pass rates (current %s, prev %s). Skipping check.", current_rate, prev_rate)
+        return True
+
     delta = abs(current_rate - prev_rate)
 
     if (state.get("retry_count", 0) or 0) > 1 and delta < EPSILON_PASS_RATE_DELTA:
@@ -852,10 +860,10 @@ def build_graph(checkpointer=None):
     workflow.add_edge("planner", "complexity_scorer")
     workflow.add_edge("complexity_scorer", "cost_estimator")
     workflow.add_edge("cost_estimator", "context_assembler")
-    workflow.add_edge("context_assembler", "test_integrity_guard")
+    workflow.add_edge("context_assembler", "actor_wrapper")
+    workflow.add_edge("actor_wrapper", "test_integrity_guard")
     workflow.add_edge("test_integrity_guard", "sanitize")
-    workflow.add_edge("sanitize", "actor_wrapper")
-    workflow.add_edge("actor_wrapper", "critic")
+    workflow.add_edge("sanitize", "critic")
 
     workflow.add_conditional_edges(
         "critic",

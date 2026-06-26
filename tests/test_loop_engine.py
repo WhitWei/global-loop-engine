@@ -396,7 +396,7 @@ def test_load_token_usage_from_env_errors():
         assert res == {}
 
 def test_parse_pass_rate_various():
-    assert loop_engine.parse_pass_rate("") == 0.0
+    assert loop_engine.parse_pass_rate("") == -1.0
     assert loop_engine.parse_pass_rate("1 failed") == 0.0
     assert loop_engine.parse_pass_rate("1 passed, 1 failed") == 0.5
 
@@ -544,3 +544,106 @@ def test_compute_test_signature_excludes_pycache():
     finally:
         shutil.rmtree(tmpdir)
 
+
+def test_check_delta_gain_bypass_when_parse_fails():
+    """测试当通过率解析失败（返回 -1.0，如非 pytest 的 Go/npm 框架）时，DeltaGain 会自动绕过不进行无进展拦截。"""
+    # 1. 当前通过率解析失败为 -1.0 -> 绕过
+    state1 = {
+        "retry_count": 2,
+        "last_exit_code": 1,
+        "current_test_pass_rate": -1.0,
+        "prev_test_pass_rate": 0.5
+    }
+    assert loop_engine.check_delta_gain(state1) is True
+
+    # 2. 前一次通过率解析失败为 -1.0 -> 绕过
+    state2 = {
+        "retry_count": 2,
+        "last_exit_code": 1,
+        "current_test_pass_rate": 0.5,
+        "prev_test_pass_rate": -1.0
+    }
+    assert loop_engine.check_delta_gain(state2) is True
+
+
+def test_integrity_guard_prevents_cheat_on_resume():
+    """测试在图发生中断挂起后，如果外部智能体试图篡改单测，在 Resume 恢复时能被 test_integrity_guard 正确捕获并熔断。"""
+    from langgraph.checkpoint.memory import MemorySaver
+    import tempfile
+    import shutil
+
+    tmpdir = tempfile.mkdtemp()
+    try:
+        # 1. 建立测试环境的 tests/ 目录，放入原始测试脚本
+        test_file = os.path.join(tmpdir, "test_cheat.py")
+        with open(test_file, "w", encoding="utf-8") as f:
+            f.write("def test_original(): pass")
+
+        # 2. 我们需要 Mock compute_test_signature 的行为，使之指向我们的临时测试目录
+        original_compute = loop_engine.compute_test_signature
+        def mock_compute(tests_dir_arg=None):
+            return original_compute(tmpdir)
+
+        # 3. 构造并编译图，指定 MemorySaver 以便于在单测中持久化恢复
+        checkpointer = MemorySaver()
+        graph = loop_engine.build_graph(checkpointer)
+        config = {"configurable": {"thread_id": "cheat-test-thread"}}
+
+        initial_state = {
+            "task_prompt": "Fix some bug",
+            "complexity_score": 0,
+            "estimated_cost": 0.0,
+            "execution_plan": [],
+            "code_diffs": {},
+            "last_exit_code": -1,
+            "retry_count": 0,
+            "max_retries": 2,
+            "critic_feedback": [],
+            "is_constitutional": False,
+            "assembled_context": "",
+            "last_error_context": {},
+            "compressed_history": [],
+            "state_hash_history": [],
+            "validation_output": "",
+            "prev_test_pass_rate": 0.0,
+            "current_test_pass_rate": 0.0,
+            "planned_commands": [],
+            "test_baseline_signature": "",
+            "snapshot_counter": 0,
+            "fatal_violation": False,
+            "token_usage": {},
+            "execution_duration": 0.0,
+        }
+
+        # 4. 在 mock 的情况下，流式执行第一阶段，直到在 actor_wrapper 前挂起
+        with patch("global_loop_engine.loop_engine.compute_test_signature", side_effect=mock_compute), \
+             patch("subprocess.run") as mock_run:
+            
+            # Mock git commands inside actor_wrapper to avoid running real git in unit test
+            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+
+            # 第一阶段：流式执行到第一个中断点
+            for event in graph.stream(initial_state, config=config):
+                pass
+            
+            # 确认处于挂起状态，且下一个执行节点是 actor_wrapper
+            state = graph.get_state(config)
+            assert "actor_wrapper" in state.next
+            assert state.values.get("test_baseline_signature") != ""
+            
+            # 5. 挂起后，模拟智能体作弊行为：篡改单测脚本
+            with open(test_file, "w", encoding="utf-8") as f:
+                f.write("def test_original(): pass\n# CHEAT_MODIFICATION")
+
+            # 6. Resume 恢复执行，观察是否会直接走 FATAL 熔断
+            for event in graph.stream(None, config=config):
+                pass
+            
+            # 检查最终的状态值
+            final_state = graph.get_state(config).values
+            assert final_state.get("fatal_violation") is True
+            assert final_state.get("is_constitutional") is False
+            assert any("FATAL: tests/ directory signature mismatch" in fb for fb in final_state.get("critic_feedback", []))
+            
+    finally:
+        shutil.rmtree(tmpdir)
