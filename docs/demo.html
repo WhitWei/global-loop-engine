@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>global-loop-engine · Live Demo</title>
+<meta property="og:title" content="global-loop-engine · Loop Engineering Runtime Demo">
+<meta property="og:description" content="Watch an AI agent get caught faking test results — then forced to actually fix the bug. Think → Execute → Critique → Refine.">
+<meta property="og:image" content="https://opengraph.githubassets.com/1/WhitWei/global-loop-engine">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#0d1117;font-family:'SF Mono','Fira Code','Cascadia Code',monospace;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding:32px 16px 48px}
+
+  .header{text-align:center;margin-bottom:28px}
+  .header h1{color:#e6edf3;font-size:18px;font-weight:500;letter-spacing:.01em;margin-bottom:6px}
+  .header p{color:#8b949e;font-size:13px}
+  .header a{color:#58a6ff;text-decoration:none}
+  .header a:hover{text-decoration:underline}
+
+  .term-wrap{width:100%;max-width:720px;background:#0d1117;border:1px solid #30363d;border-radius:12px;overflow:hidden}
+
+  .term-bar{background:#161b22;padding:10px 16px;display:flex;align-items:center;gap:8px;border-bottom:1px solid #30363d}
+  .dot{width:12px;height:12px;border-radius:50%}
+  .term-title{color:#8b949e;font-size:12px;margin:0 auto}
+
+  .term-body{padding:18px 22px;min-height:310px;font-size:13px;line-height:1.75}
+  .line{display:block;margin:1px 0;white-space:pre}
+
+  .c-dim{color:#484f58}
+  .c-white{color:#e6edf3}
+  .c-red{color:#f85149}
+  .c-green{color:#3fb950}
+  .c-yellow{color:#d29922}
+  .c-blue{color:#58a6ff}
+  .c-purple{color:#bc8cff}
+  .c-gray{color:#8b949e}
+
+  .status-bar{display:flex;align-items:center;gap:8px;padding:10px 16px;background:#161b22;border-top:1px solid #30363d;flex-wrap:wrap}
+  .stage-pill{font-size:11px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:3px 11px;border-radius:20px;font-weight:500;transition:all .25s;flex-shrink:0}
+  .pill-active{background:#1f6feb;color:#e6edf3}
+  .pill-done{background:#238636;color:#e6edf3}
+  .pill-fail{background:#da3633;color:#e6edf3}
+  .pill-idle{background:#21262d;color:#484f58}
+  .iter-label{margin-left:auto;font-size:11px;color:#484f58;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
+
+  .controls{width:100%;max-width:720px;margin-top:16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .btn{background:#21262d;border:1px solid #30363d;color:#e6edf3;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:7px 18px;border-radius:6px;cursor:pointer;transition:background .15s,border-color .15s}
+  .btn:hover{background:#30363d;border-color:#58a6ff}
+  .btn:disabled{opacity:.35;cursor:not-allowed}
+  .btn-primary{background:#238636;border-color:#238636}
+  .btn-primary:hover{background:#2ea043;border-color:#2ea043}
+
+  .meta{width:100%;max-width:720px;margin-top:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .badge{font-size:12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:3px 11px;border-radius:20px;background:#21262d;border:1px solid #30363d;color:#8b949e}
+  .badge-desc{color:#e6edf3}
+
+  .progress{width:100%;max-width:720px;margin-top:12px;background:#21262d;border-radius:4px;height:3px;overflow:hidden}
+  .progress-bar{height:3px;background:#238636;border-radius:4px;transition:width .3s ease}
+
+  .footer{margin-top:32px;text-align:center;color:#484f58;font-size:12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.8}
+  .footer a{color:#58a6ff;text-decoration:none}
+  .footer a:hover{text-decoration:underline}
+
+  @media(max-width:500px){
+    .term-body{font-size:11px;padding:12px 14px}
+    body{padding:16px 8px 32px}
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>global-loop-engine · live demo</h1>
+  <p>Think → Execute → Critique → Refine &nbsp;·&nbsp; <a href="https://github.com/WhitWei/global-loop-engine" target="_blank">github.com/WhitWei/global-loop-engine</a></p>
+</div>
+
+<div class="term-wrap">
+  <div class="term-bar">
+    <div class="dot" style="background:#ff5f57"></div>
+    <div class="dot" style="background:#febc2e"></div>
+    <div class="dot" style="background:#28c840"></div>
+    <div class="term-title" id="term-title">global-loop-engine · loop --task "fix auth bug"</div>
+  </div>
+  <div class="term-body" id="term-body"></div>
+  <div class="status-bar">
+    <span class="stage-pill pill-idle" id="p1">Think</span>
+    <span class="stage-pill pill-idle" id="p2">Execute</span>
+    <span class="stage-pill pill-idle" id="p3">Critique</span>
+    <span class="stage-pill pill-idle" id="p4">Refine</span>
+    <span class="stage-pill pill-idle" id="p5">Pass</span>
+    <span class="iter-label" id="iter-label">loop 0 / 3</span>
+  </div>
+</div>
+
+<div class="progress"><div class="progress-bar" id="prog" style="width:0%"></div></div>
+
+<div class="controls">
+  <button class="btn" id="btn-prev" onclick="prev()">← Prev</button>
+  <button class="btn btn-primary" id="btn-next" onclick="next()">Next →</button>
+  <button class="btn" onclick="reset()">↺ Restart</button>
+</div>
+
+<div class="meta">
+  <span class="badge" id="badge-step">Step 1 / 5</span>
+  <span class="badge badge-desc" id="badge-desc">Agent 开始规划任务</span>
+</div>
+
+<div class="footer">
+  <p>基于真实项目 <strong>puhua-poc</strong>（中药研发企业级多 Agent 平台）提炼的核心引擎</p>
+  <p style="margin-top:4px">
+    <a href="https://github.com/WhitWei/global-loop-engine" target="_blank">GitHub</a> &nbsp;·&nbsp;
+    <a href="https://pypi.org/project/global-loop-engine/" target="_blank">PyPI</a> &nbsp;·&nbsp;
+    MIT License
+  </p>
+</div>
+
+<script>
+const stages = [
+  {
+    title:'global-loop-engine · Think node',
+    pills:['active','idle','idle','idle','idle'],
+    iter:'loop 1 / 3',
+    desc:'Agent 开始规划任务',
+    lines:[
+      {c:'c-dim', t:'$ loop-engine --task "fix auth bug in user_service.py"'},
+      {c:'c-dim', t:''},
+      {c:'c-blue',t:'[loop-engine]  v0.1.0  starting...'},
+      {c:'c-dim', t:'──────────────────────────────────────────────────'},
+      {c:'c-purple',t:'[THINK]  planning task decomposition'},
+      {c:'c-gray',t:'  > goal      : fix auth bug in user_service.py'},
+      {c:'c-gray',t:'  > strategy  : locate token validation, patch expiry check'},
+      {c:'c-gray',t:'  > subtasks  : [1] read file  [2] patch  [3] verify'},
+      {c:'c-dim', t:''},
+      {c:'c-gray',t:'  AgentState.task_goal   = "fix auth bug"'},
+      {c:'c-gray',t:'  AgentState.plan_ready  = true'},
+      {c:'c-dim', t:''},
+      {c:'c-blue',t:'[THINK]  done  →  routing to Execute'},
+    ]
+  },
+  {
+    title:'global-loop-engine · Execute node  (attempt 1)',
+    pills:['done','active','idle','idle','idle'],
+    iter:'loop 1 / 3',
+    desc:'Agent 执行代码，自称成功',
+    lines:[
+      {c:'c-blue',  t:'[EXECUTE]  running agent code generation...'},
+      {c:'c-dim',   t:''},
+      {c:'c-gray',  t:'  LLM response received  (claude-sonnet)'},
+      {c:'c-gray',  t:'  writing patch →  user_service.py:142'},
+      {c:'c-dim',   t:''},
+      {c:'c-yellow', t:'  + def validate_token(token):'},
+      {c:'c-yellow', t:'  +     return jwt.decode(token, SECRET)   # no expiry check'},
+      {c:'c-dim',   t:''},
+      {c:'c-dim',   t:'  agent running self-evaluation...'},
+      {c:'c-dim',   t:''},
+      {c:'c-green', t:'  Agent:  "[PASS] 10 tests passed. Auth bug fixed. ✓"'},
+      {c:'c-dim',   t:''},
+      {c:'c-blue',  t:'[EXECUTE]  done  →  routing to Critique'},
+    ]
+  },
+  {
+    title:'global-loop-engine · Critique node  ✕  FAIL',
+    pills:['done','done','fail','idle','idle'],
+    iter:'loop 1 / 3',
+    desc:'Engine 独立评审，亮红灯拦截虚假通过',
+    lines:[
+      {c:'c-blue',  t:'[CRITIQUE]  evaluating in isolated sandbox...'},
+      {c:'c-dim',   t:''},
+      {c:'c-gray',  t:'  running pytest  (engine-controlled, not agent-controlled)'},
+      {c:'c-dim',   t:''},
+      {c:'c-red',   t:'  FAILED  tests/test_auth.py::test_expired_token'},
+      {c:'c-red',   t:'  AssertionError: expired token should raise ExpiredSignatureError'},
+      {c:'c-red',   t:'  got: <User id=42>   expected: exception'},
+      {c:'c-dim',   t:''},
+      {c:'c-dim',   t:'  raw traceback  : 14,823 tokens'},
+      {c:'c-yellow', t:'  StateCompressor : 14,823 → 601 tokens  (↓ 96%)'},
+      {c:'c-dim',   t:''},
+      {c:'c-red',   t:'  critique_score  : 0.21 / 1.0   [ FAIL ]'},
+      {c:'c-gray',  t:'  AgentState.best_attempt  saved  (checkpoint)'},
+      {c:'c-dim',   t:''},
+      {c:'c-red',   t:'[CRITIQUE]  rejected  →  routing to Refine  (iter 1/3)'},
+    ]
+  },
+  {
+    title:'global-loop-engine · Refine  →  Re-Execute',
+    pills:['done','active','idle','active','idle'],
+    iter:'loop 2 / 3',
+    desc:'Agent 收到压缩反馈，重新修复',
+    lines:[
+      {c:'c-blue',  t:'[REFINE]  sending compressed feedback to LLM...'},
+      {c:'c-dim',   t:''},
+      {c:'c-yellow', t:'  feedback prompt  (601 tokens):'},
+      {c:'c-gray',  t:'  ┌─────────────────────────────────────────────────┐'},
+      {c:'c-gray',  t:'  │ validate_token() does not verify token expiry.  │'},
+      {c:'c-gray',  t:'  │ test_expired_token expects ExpiredSignatureError.│'},
+      {c:'c-gray',  t:'  │ Fix: add options={"verify_exp": True}           │'},
+      {c:'c-gray',  t:'  └─────────────────────────────────────────────────┘'},
+      {c:'c-dim',   t:''},
+      {c:'c-blue',  t:'[EXECUTE]  agent rewriting patch...'},
+      {c:'c-dim',   t:''},
+      {c:'c-green', t:'  + def validate_token(token):'},
+      {c:'c-green', t:'  +     return jwt.decode(token, SECRET,'},
+      {c:'c-green', t:'  +         options={"verify_exp": True})  # fixed'},
+      {c:'c-dim',   t:''},
+      {c:'c-blue',  t:'[EXECUTE]  done  →  routing to Critique  (iter 2)'},
+    ]
+  },
+  {
+    title:'global-loop-engine · Critique  ✓  PASS',
+    pills:['done','done','done','done','done'],
+    iter:'loop 2 / 3',
+    desc:'Engine 验证通过，绿灯输出',
+    lines:[
+      {c:'c-blue',  t:'[CRITIQUE]  evaluating in isolated sandbox...'},
+      {c:'c-dim',   t:''},
+      {c:'c-gray',  t:'  running pytest  (engine-controlled)'},
+      {c:'c-dim',   t:''},
+      {c:'c-green', t:'  PASSED  tests/test_auth.py::test_expired_token'},
+      {c:'c-green', t:'  PASSED  tests/test_auth.py::test_valid_token'},
+      {c:'c-green', t:'  PASSED  tests/test_auth.py::test_invalid_secret'},
+      {c:'c-dim',   t:''},
+      {c:'c-green', t:'  critique_score : 0.97 / 1.0   [ PASS ]'},
+      {c:'c-dim',   t:''},
+      {c:'c-dim',   t:'──────────────────────────────────────────────────'},
+      {c:'c-green', t:'  output accepted after 2 iterations'},
+      {c:'c-gray',  t:'  token savings  : ~14,222 tokens  (96% reduction)'},
+      {c:'c-gray',  t:'  oscillation    : none detected'},
+      {c:'c-gray',  t:'  exit code      : 0'},
+      {c:'c-dim',   t:''},
+      {c:'c-green', t:'[loop-engine]  done. ✓'},
+    ]
+  }
+];
+
+let cur = 0;
+
+function render(){
+  const s = stages[cur];
+  document.getElementById('term-title').textContent = s.title;
+  document.getElementById('iter-label').textContent = s.iter;
+  document.getElementById('badge-step').textContent = 'Step '+(cur+1)+' / '+stages.length;
+  document.getElementById('badge-desc').textContent = s.desc;
+  document.getElementById('prog').style.width = (((cur+1)/stages.length)*100)+'%';
+
+  const ids=['p1','p2','p3','p4','p5'];
+  const map={active:'pill-active',done:'pill-done',fail:'pill-fail',idle:'pill-idle'};
+  ids.forEach((id,i)=>{
+    document.getElementById(id).className='stage-pill '+map[s.pills[i]];
+  });
+
+  const body=document.getElementById('term-body');
+  body.innerHTML=s.lines.map(l=>`<span class="line ${l.c}">${l.t===''?'&nbsp;':l.t.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</span>`).join('');
+
+  document.getElementById('btn-prev').disabled=cur===0;
+  const nb=document.getElementById('btn-next');
+  nb.disabled=cur===stages.length-1;
+  nb.textContent=cur===stages.length-1?'✓ Done':'Next →';
+}
+
+function next(){if(cur<stages.length-1){cur++;render();}}
+function prev(){if(cur>0){cur--;render();}}
+function reset(){cur=0;render();}
+
+render();
+</script>
+</body>
+</html>
