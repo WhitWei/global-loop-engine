@@ -33,14 +33,14 @@ def test_test_integrity_guard_node_no_baseline():
 
 def test_test_integrity_guard_node_match():
     # Use a dummy signature
-    state = {"test_baseline_signature": "dummy_hash"}
-    with patch("global_loop_engine.loop_engine.compute_test_signature", return_value="dummy_hash"):
+    state = {"test_baseline_signature": "dummy_hash", "test_baseline_files": ["f1.py"]}
+    with patch("global_loop_engine.loop_engine.compute_test_signature", return_value=("dummy_hash", ["f1.py"])):
         result = loop_engine.test_integrity_guard_node(state)
         assert result == {}
 
 def test_test_integrity_guard_node_mismatch():
-    state = {"test_baseline_signature": "baseline_hash"}
-    with patch("global_loop_engine.loop_engine.compute_test_signature", return_value="current_hash"):
+    state = {"test_baseline_signature": "baseline_hash", "test_baseline_files": ["f1.py"]}
+    with patch("global_loop_engine.loop_engine.compute_test_signature", return_value=("current_hash", ["f1.py"])):
         result = loop_engine.test_integrity_guard_node(state)
         assert result["is_constitutional"] is False
         assert result["fatal_violation"] is True
@@ -315,9 +315,10 @@ def test_actor_wrapper_node():
         assert result["snapshot_counter"] == 1
 
 def test_planner_node():
-    with patch("global_loop_engine.loop_engine.compute_test_signature", return_value="dummy_sig"):
+    with patch("global_loop_engine.loop_engine.compute_test_signature", return_value=("dummy_sig", ["f1.py"])):
         result = loop_engine.planner_node({})
         assert result["test_baseline_signature"] == "dummy_sig"
+        assert result["test_baseline_files"] == ["f1.py"]
         assert len(result["execution_plan"]) > 0
 
 def test_state_compressor_node():
@@ -387,8 +388,9 @@ def test_resume_or_start():
             assert res["is_constitutional"] is True
 
 def test_compute_test_signature_no_dir():
-    sig = loop_engine.compute_test_signature("non_existent_directory_xyz")
+    sig, files = loop_engine.compute_test_signature("non_existent_directory_xyz")
     assert sig == "NO_TESTS_DIR"
+    assert files == []
 
 def test_load_token_usage_from_env_errors():
     with patch.dict(os.environ, {"LLM_PROMPT_TOKENS": "invalid"}):
@@ -470,14 +472,15 @@ def test_compute_test_signature_with_files():
         with open(filepath, "w", encoding="utf-8") as f:
             f.write("def test_dummy(): pass")
             
-        sig = loop_engine.compute_test_signature(tmpdir)
+        sig, files = loop_engine.compute_test_signature(tmpdir)
         assert len(sig) == 64
+        assert files == ["test_file.py"]
         
         # Signatures should differ if file is modified
         with open(filepath, "w", encoding="utf-8") as f:
             f.write("def test_dummy(): pass\n# comment")
             
-        sig2 = loop_engine.compute_test_signature(tmpdir)
+        sig2, files2 = loop_engine.compute_test_signature(tmpdir, allowed_files=files)
         assert sig != sig2
     finally:
         shutil.rmtree(tmpdir)
@@ -515,7 +518,7 @@ def test_compute_test_signature_excludes_pycache():
         with open(filepath, "w", encoding="utf-8") as f:
             f.write("def test_dummy(): pass")
             
-        sig_base = loop_engine.compute_test_signature(tmpdir)
+        sig_base, files_base = loop_engine.compute_test_signature(tmpdir)
         assert len(sig_base) == 64
         
         # 2. 创建 __pycache__ 目录和里面的 .pyc 文件
@@ -537,7 +540,7 @@ def test_compute_test_signature_excludes_pycache():
         with open(pyc_isolated, "wb") as f:
             f.write(b"another dummy pyc")
             
-        sig_with_caches = loop_engine.compute_test_signature(tmpdir)
+        sig_with_caches, files_with_caches = loop_engine.compute_test_signature(tmpdir)
         # 签名应该不受缓存文件和目录的影响，保持一致
         assert sig_base == sig_with_caches
         
@@ -566,6 +569,19 @@ def test_check_delta_gain_bypass_when_parse_fails():
     assert loop_engine.check_delta_gain(state2) is True
 
 
+def test_env_parsers():
+    """测试环境变量容错解析，避免由于空字符串或格式错误导致 int/float 转型崩溃。"""
+    with patch.dict(os.environ, {"TEST_INT": "  ", "TEST_FLOAT": "abc", "TEST_STR": ""}):
+        assert loop_engine._env_int("TEST_INT", 10) == 10
+        assert loop_engine._env_float("TEST_FLOAT", 3.14) == 3.14
+        assert loop_engine._env_str("TEST_STR", "default") == "default"
+        
+    with patch.dict(os.environ, {"TEST_INT": "42", "TEST_FLOAT": "1.23", "TEST_STR": "hello"}):
+        assert loop_engine._env_int("TEST_INT", 10) == 42
+        assert loop_engine._env_float("TEST_FLOAT", 3.14) == 1.23
+        assert loop_engine._env_str("TEST_STR", "default") == "hello"
+
+
 def test_integrity_guard_prevents_cheat_on_resume():
     """测试在图发生中断挂起后，如果外部智能体试图篡改单测，在 Resume 恢复时能被 test_integrity_guard 正确捕获并熔断。"""
     from langgraph.checkpoint.memory import MemorySaver
@@ -581,8 +597,8 @@ def test_integrity_guard_prevents_cheat_on_resume():
 
         # 2. 我们需要 Mock compute_test_signature 的行为，使之指向我们的临时测试目录
         original_compute = loop_engine.compute_test_signature
-        def mock_compute(tests_dir_arg=None):
-            return original_compute(tmpdir)
+        def mock_compute(tests_dir_arg=None, allowed_files=None):
+            return original_compute(tmpdir, allowed_files=allowed_files)
 
         # 3. 构造并编译图，指定 MemorySaver 以便于在单测中持久化恢复
         checkpointer = MemorySaver()
@@ -609,6 +625,7 @@ def test_integrity_guard_prevents_cheat_on_resume():
             "current_test_pass_rate": 0.0,
             "planned_commands": [],
             "test_baseline_signature": "",
+            "test_baseline_files": [],
             "snapshot_counter": 0,
             "fatal_violation": False,
             "token_usage": {},

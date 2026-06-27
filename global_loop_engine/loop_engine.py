@@ -40,20 +40,44 @@ try:
 except ImportError:
     _LANGGRAPH_AVAILABLE = False
 
+def _env_str(key: str, default: str) -> str:
+    val = os.environ.get(key, "").strip()
+    if not val:
+        return default
+    return val
+
+def _env_int(key: str, default: int) -> int:
+    val = os.environ.get(key, "").strip()
+    if not val:
+        return default
+    try:
+        return int(val)
+    except ValueError:
+        return default
+
+def _env_float(key: str, default: float) -> float:
+    val = os.environ.get(key, "").strip()
+    if not val:
+        return default
+    try:
+        return float(val)
+    except ValueError:
+        return default
+
 # ---------------------------------------------------------------------------
 # Constants (configuration separated from code, declared at top level)
 # ---------------------------------------------------------------------------
-CHECKPOINT_DB: str = os.environ.get(
+CHECKPOINT_DB: str = _env_str(
     "LOOP_ENGINE_DB_PATH",
     os.path.join(Path.home(), ".loop-engine", "loop_checkpoints.db"),
 )
-MAX_RETRIES: int = int(os.environ.get("MAX_RETRIES", "3"))
-EPSILON_PASS_RATE_DELTA: float = float(os.environ.get("EPSILON_PASS_RATE_DELTA", "0.02"))
-MAX_FEEDBACK_HISTORY: int = int(os.environ.get("MAX_FEEDBACK_HISTORY", "3"))
-MAX_DIFF_LENGTH: int = int(os.environ.get("MAX_DIFF_LENGTH", "500"))
-MAX_ERROR_OUTPUT_LENGTH: int = int(os.environ.get("MAX_ERROR_OUTPUT_LENGTH", "500"))
-LOGGER_NAME: str = os.environ.get("LOGGER_NAME", "global_loop_engine")
-TESTS_DIR_DEFAULT: str = os.environ.get("TESTS_DIR_DEFAULT", "./tests")
+MAX_RETRIES: int = _env_int("MAX_RETRIES", 3)
+EPSILON_PASS_RATE_DELTA: float = _env_float("EPSILON_PASS_RATE_DELTA", 0.02)
+MAX_FEEDBACK_HISTORY: int = _env_int("MAX_FEEDBACK_HISTORY", 3)
+MAX_DIFF_LENGTH: int = _env_int("MAX_DIFF_LENGTH", 500)
+MAX_ERROR_OUTPUT_LENGTH: int = _env_int("MAX_ERROR_OUTPUT_LENGTH", 500)
+LOGGER_NAME: str = _env_str("LOGGER_NAME", "global_loop_engine")
+TESTS_DIR_DEFAULT: str = _env_str("TESTS_DIR_DEFAULT", "./tests")
 
 # ---- Dangerous command patterns for SanitizeNode (WO-03) ----
 DANGEROUS_PATTERNS: list[str] = [
@@ -132,6 +156,7 @@ class GlobalExecutionState(TypedDict):
 
     # WO-02: test integrity baseline
     test_baseline_signature: NotRequired[str]
+    test_baseline_files: NotRequired[list[str]]
 
     # C-001 fix: snapshot counter for rollback orchestration
     snapshot_counter: NotRequired[int]
@@ -193,7 +218,8 @@ def export_state_to_json(state: dict, filepath: str = ".loop_state.json"):
         "is_constitutional", "assembled_context", "last_error_context",
         "compressed_history", "validation_output", "prev_test_pass_rate",
         "current_test_pass_rate", "planned_commands", "test_baseline_signature",
-        "snapshot_counter", "fatal_violation", "token_usage", "execution_duration"
+        "test_baseline_files", "snapshot_counter", "fatal_violation", "token_usage",
+        "execution_duration"
     ]
     
     for key in serializable_keys:
@@ -211,60 +237,86 @@ def export_state_to_json(state: dict, filepath: str = ".loop_state.json"):
         logger.error("[StateExport] Failed to export state: %s", e)
 
 
-def _compute_file_tree_hash(directory: str) -> str:
+def _compute_file_tree_hash(directory: str, allowed_files: list[str] | None = None) -> tuple[str, list[str]]:
     """WO-02: Compute SHA256 fingerprint of all files in a directory.
 
     Why SHA256: collision resistance for integrity verification.
     Why include relative paths in hash: prevents file-rename and content-swap
     attacks where an agent moves tests between files to evade detection
     (S-001 fix). Each file's hash contribution is: SHA256(path + '\0' + content).
+    
+    If allowed_files is provided, only files in this whitelist are hashed.
+    Returns: (hex_digest, file_list)
     """
     sig = hashlib.sha256()
     p = Path(directory)
     if not p.exists():
-        return "NO_TESTS_DIR"
+        return "NO_TESTS_DIR", []
 
     exclude_patterns = {"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"}
     exclude_extensions = {".pyc", ".pyo", ".pyd"}
 
-    for filepath in sorted(p.rglob("*")):
-        # Skip cache directories
-        if any(part in exclude_patterns for part in filepath.parts):
-            continue
-        # Skip compiled/cached files
-        if filepath.suffix in exclude_extensions:
-            continue
+    file_list = []
 
-        if filepath.is_file():
+    if allowed_files is not None:
+        # 只处理白名单中的文件，允许新增文件，防范修改与删除
+        for rel_path in sorted(allowed_files):
+            filepath = p / rel_path
+            if not filepath.exists():
+                # 文件被删除了！将其作为特殊标记算入 hash 以改变最终指纹
+                sig.update(f"DELETED:{rel_path}".encode("utf-8"))
+                continue
+            
             try:
                 with open(filepath, "rb") as fh:
                     content = fh.read()
-                # Include relative path + null separator to bind content to filename
-                rel_path = str(filepath.relative_to(p))
                 sig.update(rel_path.encode("utf-8"))
                 sig.update(b"\x00")
                 sig.update(content)
+                file_list.append(rel_path)
             except (PermissionError, OSError) as exc:
                 logger.warning("Cannot read file %s: %s", filepath, exc)
                 continue
-    return sig.hexdigest()
+    else:
+        # 扫描所有文件并收集列表
+        for filepath in sorted(p.rglob("*")):
+            if any(part in exclude_patterns for part in filepath.parts):
+                continue
+            if filepath.suffix in exclude_extensions:
+                continue
+
+            if filepath.is_file():
+                try:
+                    with open(filepath, "rb") as fh:
+                        content = fh.read()
+                    rel_path = str(filepath.relative_to(p))
+                    sig.update(rel_path.encode("utf-8"))
+                    sig.update(b"\x00")
+                    sig.update(content)
+                    file_list.append(rel_path)
+                except (PermissionError, OSError) as exc:
+                    logger.warning("Cannot read file %s: %s", filepath, exc)
+                    continue
+
+    return sig.hexdigest(), file_list
 
 
 # =============================================================================
 # WO-02: TestIntegrityGuardNode — tests/ Tamper-Proof Signature (P0 Security)
 # =============================================================================
 
-def compute_test_signature(tests_dir: str | None = None) -> str:
+def compute_test_signature(tests_dir: str | None = None, allowed_files: list[str] | None = None) -> tuple[str, list[str]]:
     """Compute SHA256 fingerprint of the tests/ directory.
 
     Args:
         tests_dir: Test directory path, defaults to TESTS_DIR_DEFAULT.
+        allowed_files: Whitelist file list, defaults to None (scan all).
 
     Returns:
-        64-char hex SHA256 digest, or "NO_TESTS_DIR" if directory not found.
+        (64-char hex SHA256 digest, file_list)
     """
     target = tests_dir or TESTS_DIR_DEFAULT
-    return _compute_file_tree_hash(target)
+    return _compute_file_tree_hash(target, allowed_files)
 
 
 def test_integrity_guard_node(state: GlobalExecutionState) -> dict:
@@ -274,11 +326,18 @@ def test_integrity_guard_node(state: GlobalExecutionState) -> dict:
     state["test_baseline_signature"]. Mismatch triggers immediate circuit-break.
     """
     baseline_sig = state.get("test_baseline_signature", "")
-    current_sig = compute_test_signature()
+    baseline_files = state.get("test_baseline_files")
+
+    # 仅针对进入引擎前已经存在的测试文件进行指纹校验，宽限新增的合法测试文件
+    current_sig, _ = compute_test_signature(allowed_files=baseline_files)
 
     if not baseline_sig:
         logger.info("[TestIntegrityGuard] No baseline signature, skipping")
-        return {"test_baseline_signature": current_sig}
+        init_sig, init_files = compute_test_signature()
+        return {
+            "test_baseline_signature": init_sig,
+            "test_baseline_files": init_files
+        }
 
     if current_sig != baseline_sig:
         logger.critical(
@@ -398,13 +457,15 @@ def rollback_node(state: GlobalExecutionState, workdir: str | None = None) -> di
 
 def planner_node(state: GlobalExecutionState) -> dict:
     """Initialize tests/ baseline signature before any code changes."""
-    baseline = compute_test_signature()
+    baseline_sig, baseline_files = compute_test_signature()
     logger.info(
-        "[PlannerNode] tests/ baseline signature initialized: %s",
-        baseline[:16] if baseline != "NO_TESTS_DIR" else "N/A",
+        "[PlannerNode] tests/ baseline signature initialized: %s (%d files)",
+        baseline_sig[:16] if baseline_sig != "NO_TESTS_DIR" else "N/A",
+        len(baseline_files)
     )
     return {
-        "test_baseline_signature": baseline,
+        "test_baseline_signature": baseline_sig,
+        "test_baseline_files": baseline_files,
         "execution_plan": [
             "Planner → ComplexityScorer → CostEstimator → "
             "ContextAssembler → TestIntegrityGuard → Sanitize → Critic → Router"
@@ -894,7 +955,8 @@ def resume_or_start(task: str, mode: str = "auto", thread_id: str = "default"):
 
 
     # Ensure parent directory exists for fresh installs
-    os.makedirs(os.path.dirname(CHECKPOINT_DB), exist_ok=True)
+    db_path_abs = os.path.abspath(CHECKPOINT_DB)
+    os.makedirs(os.path.dirname(db_path_abs), exist_ok=True)
 
     with SqliteSaver.from_conn_string(CHECKPOINT_DB) as checkpointer:
         graph = build_graph_with_persistence(checkpointer)
@@ -934,6 +996,7 @@ def resume_or_start(task: str, mode: str = "auto", thread_id: str = "default"):
                 "current_test_pass_rate": 0.0,
                 "planned_commands": [],
                 "test_baseline_signature": "",
+                "test_baseline_files": [],
                 "snapshot_counter": 0,
                 "fatal_violation": False,
                 "token_usage": {},
