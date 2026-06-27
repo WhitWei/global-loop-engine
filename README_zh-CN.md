@@ -48,12 +48,12 @@ pip install global-loop-engine
 
 #### 方法 B：下载 GitHub Releases 资源包安装（离线 / 特定版本）
 1. 访问 [Releases](https://github.com/WhitWei/global-loop-engine/releases) 页面。
-2. 下载通用的 Wheel 资源包（例如 `0.1.0` 版本的 `global_loop_engine-0.1.0-py3-none-any.whl`）。
+2. 下载通用的 Wheel 资源包（例如 `0.1.7` 版本的 `global_loop_engine-0.1.7-py3-none-any.whl`）。
    > **注意**：MacOS、Windows 和 Linux 用户均下载这同一个通用文件。
    > **命名差异说明**：根据 Python 官方打包标准，项目名中的连字符 `-` 在 `.whl` 文件名中会被自动转换为下划线 `_`（而在源码包 `.tar.gz` 中会保留连字符 `-`）。
-3. 在本地运行安装（请将 `0.1.0` 替换为您下载的实际版本号，或使用通配符）：
+3. 在本地运行安装（请将 `0.1.7` 替换为您下载的实际版本号，或使用通配符）：
    ```bash
-   pip install global_loop_engine-0.1.0-py3-none-any.whl
+   pip install global_loop_engine-0.1.7-py3-none-any.whl
    # 或使用通配符安装：pip install global_loop_engine-*.whl
    ```
 
